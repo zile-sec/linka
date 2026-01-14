@@ -1,0 +1,76 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: user-service
+  namespace: default
+  labels:
+    app: user-service
+    version: v1
+spec:
+  replicas: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: user-service
+  template:
+    metadata:
+      labels:
+        app: user-service
+        version: v1
+    spec:
+      containers:
+      - name: user-service
+        image: linka/user-service:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - name: http
+          containerPort: 8000
+          protocol: TCP
+        env:
+        - name: SUPABASE_URL
+          valueFrom:
+            configMapKeyRef:
+              name: linka-config
+              key: supabase-url
+        - name: SUPABASE_KEY
+          valueFrom:
+            secretKeyRef:
+              name: linka-secrets
+              key: supabase-key
+        - name: LOG_LEVEL
+          value: "INFO"
+        - name: ENV
+          value: "production"
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: http
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 2
+        lifecycle:
+          preStop:
+            exec:
+              command: ["/bin/sh", "-c", "sleep 15"]
+      restartPolicy: Always
+      terminationGracePeriodSeconds: 30
