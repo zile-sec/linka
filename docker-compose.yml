@@ -1,0 +1,323 @@
+services:
+  # --- INFRASTRUCTURE ---
+  redis:
+    image: redis:7-alpine
+    container_name: linka-redis
+    ports:
+      - "6380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - redis_data:/data
+    networks:
+      - linka-network
+
+  rabbitmq:
+    image: rabbitmq:4.0-management-alpine
+    container_name: linka-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-guest}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-guest}
+    ports:
+      - "5673:5672"
+      - "15673:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    networks:
+      - linka-network
+
+  # --- MICROSERVICES ---
+  user-service:
+    build:
+      context: .
+      dockerfile: services/user-service/app/Dockerfile
+    container_name: linka-user-service
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    ports:
+      - "8000:8000"
+    environment:
+      - SUPABASE_URL=${SUPABASE_URL:-http://localhost:8000}
+      - SUPABASE_KEY=${SUPABASE_KEY:-test-key}
+      - LOG_LEVEL=DEBUG
+      - ENV=development
+    volumes:
+      - ./services/user-service/app:/app/app
+      #- ./services/user-service/tests:/app/tests
+    depends_on:
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 240s
+      timeout: 5s
+      retries: 5
+    networks:
+      - linka-network
+
+  order-service:
+    build:
+      context: .
+      dockerfile: services/order-service/app/Dockerfile
+    container_name: linka-order-service
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    ports:
+      - "8001:8000"
+    environment:
+      - DATABASE_URL=${DATABASE_URL:-postgresql://${DB_USER:-zile}:${DB_PASSWORD:-localpass}@postgres:5432/${DB_NAME:-linkadb}}
+      - REDIS_URL=redis://redis:6379
+      - RABBITMQ_URL=amqp://${RABBITMQ_USER:-guest}:${RABBITMQ_PASSWORD:-guest}@rabbitmq:5672/
+      - LOG_LEVEL=DEBUG
+      - ENV=development
+    volumes:
+      - ./services/order-service/app:/app/app
+    depends_on:
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 240s
+      timeout: 5s
+      retries: 5
+    networks:
+      - linka-network
+
+  product-service:
+    build:
+      context: .
+      dockerfile: services/product-service/app/Dockerfile
+    container_name: linka-product-service
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    ports:
+      - "8002:8000"
+    environment:
+      - DATABASE_URL=${DATABASE_URL:-postgresql://${DB_USER:-zile}:${DB_PASSWORD:-localpass}@postgres:5432/${DB_NAME:-linkadb}}
+      - REDIS_URL=redis://redis:6379
+      - LOG_LEVEL=DEBUG
+      - ENV=development
+    volumes:
+      - ./services/product-service/app:/app/app
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 240s
+      timeout: 5s
+      retries: 5
+    networks:
+      - linka-network
+
+  payment-service:
+    build:
+      context: .
+      dockerfile: services/payment-service/app/Dockerfile
+    container_name: linka-payment-service
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    ports:
+      - "8003:8000"
+    environment:
+      - DATABASE_URL=${DATABASE_URL:-postgresql://${DB_USER:-zile}:${DB_PASSWORD:-localpass}@postgres:5432/${DB_NAME:-linkadb}}
+      - REDIS_URL=redis://redis:6379
+      - LOG_LEVEL=DEBUG
+      - ENV=development
+    volumes:
+      - ./services/payment-service/app:/app/app
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 240s
+      timeout: 5s
+      retries: 5
+    networks:
+      - linka-network
+
+  wallet-service:
+    build:
+      context: .
+      dockerfile: services/wallet-service/app/Dockerfile
+    container_name: linka-wallet-service
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    ports:
+      - "8004:8000"
+    environment:
+      - DATABASE_URL=${DATABASE_URL:-postgresql://${DB_USER:-zile}:${DB_PASSWORD:-localpass}@postgres:5432/${DB_NAME:-linkadb}}
+      - REDIS_URL=redis://redis:6379
+      - LOG_LEVEL=DEBUG
+      - ENV=development
+    volumes:
+      - ./services/wallet-service/app:/app/app
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 240s
+      timeout: 5s
+      retries: 5
+    networks:
+      - linka-network
+
+  inventory-service:
+    build:
+      context: .
+      dockerfile: services/inventory-service/app/Dockerfile
+    container_name: linka-inventory-service
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    ports:
+      - "8005:8000"
+    environment:
+      - DATABASE_URL=${DATABASE_URL:-postgresql://${DB_USER:-zile}:${DB_PASSWORD:-localpass}@postgres:5432/${DB_NAME:-linkadb}}
+      - REDIS_URL=redis://redis:6379
+      - LOG_LEVEL=DEBUG
+      - ENV=development
+    volumes:
+      - ./services/inventory-service/app:/app/app
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 240s
+      timeout: 5s
+      retries: 5
+    networks:
+      - linka-network
+
+  delivery-service:
+    build:
+      context: .
+      dockerfile: services/delivery-service/app/Dockerfile
+    container_name: linka-delivery-service
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    ports:
+      - "8006:8000"
+    environment:
+      - DATABASE_URL=${DATABASE_URL:-postgresql://${DB_USER:-zile}:${DB_PASSWORD:-localpass}@postgres:5432/${DB_NAME:-linkadb}}
+      - REDIS_URL=redis://redis:6379
+      - LOG_LEVEL=DEBUG
+      - ENV=development
+    volumes:
+      - ./services/delivery-service/app:/app/app
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 240s
+      timeout: 5s
+      retries: 5
+    networks:
+      - linka-network
+
+  notification-service:
+    build:
+      context: .
+      dockerfile: services/notification-service/app/Dockerfile
+    container_name: linka-notification-service
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    ports:
+      - "8007:8000"
+    environment:
+      - RABBITMQ_URL=amqp://${RABBITMQ_USER:-guest}:${RABBITMQ_PASSWORD:-guest}@rabbitmq:5672/
+      - LOG_LEVEL=DEBUG
+      - ENV=development
+    volumes:
+      - ./services/notification-service/app:/app/app
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 240s
+      timeout: 5s
+      retries: 5
+    networks:
+      - linka-network
+
+  subscription-service:
+    build:
+      context: .
+      dockerfile: services/subscription-service/app/Dockerfile
+    container_name: linka-subscription-service
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    ports:
+      - "8008:8000"
+    environment:
+      - DATABASE_URL=${DATABASE_URL:-postgresql://${DB_USER:-zile}:${DB_PASSWORD:-localpass}@postgres:5432/${DB_NAME:-linkadb}}
+      - REDIS_URL=redis://redis:6379
+      - LOG_LEVEL=DEBUG
+      - ENV=development
+    volumes:
+      - ./services/subscription-service/app:/app/app
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 240s
+      timeout: 5s
+      retries: 5
+    networks:
+      - linka-network
+
+  api-gateway:
+    build:
+      context: ./gateway
+      dockerfile: Dockerfile
+    container_name: linka-api-gateway
+    command: uvicorn main:app --host 0.0.0.0 --port 8080 --reload --app-dir /app
+    ports:
+      - "8080:8080"
+    environment:
+      - USER_SERVICE_URL=http://user-service:8000
+      - ORDER_SERVICE_URL=http://order-service:8000
+      - PRODUCT_SERVICE_URL=http://product-service:8000
+      - PAYMENT_SERVICE_URL=http://payment-service:8000
+      - WALLET_SERVICE_URL=http://wallet-service:8000
+      - INVENTORY_SERVICE_URL=http://inventory-service:8000
+      - DELIVERY_SERVICE_URL=http://delivery-service:8000
+      - NOTIFICATION_SERVICE_URL=http://notification-service:8000
+      - SUBSCRIPTION_SERVICE_URL=http://subscription-service:8000
+      - SUPABASE_URL=${SUPABASE_URL:-http://localhost:8000}
+      - SUPABASE_KEY=${SUPABASE_KEY:-test-key}
+      - LOG_LEVEL=DEBUG
+      - ENV=development
+    volumes:
+      - ./gateway:/app
+    depends_on:
+      user-service:
+        condition: service_healthy
+      order-service:
+        condition: service_healthy
+      product-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 240s
+      timeout: 5s
+      retries: 5
+    networks:
+      - linka-network
+
+volumes:
+  postgres_data:
+  redis_data:
+  rabbitmq_data:
+
+networks:
+  linka-network:
+    driver: bridge  # --- YOUR SERVICES (Skeletons) ---
