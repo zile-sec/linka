@@ -67,6 +67,28 @@ class StockAlertConfig(BaseModel):
     reorder_point: int = 20
     max_stock_level: Optional[int] = None
 
+class ProductCreate(BaseModel):
+    name: str
+    description: Optional[str] = None
+    category_id: Optional[str] = None
+    sku: Optional[str] = None
+    price: Decimal = Field(..., gt=0)
+    compare_at_price: Optional[Decimal] = None
+    cost_per_unit: Optional[Decimal] = None
+    image_url: Optional[str] = None
+    tags: List[str] = []
+    initial_stock: Optional[int] = 0
+    warehouse_id: Optional[str] = None
+
+class ProductUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    price: Optional[Decimal] = None
+    compare_at_price: Optional[Decimal] = None
+    status: Optional[str] = None
+    image_url: Optional[str] = None
+    tags: Optional[List[str]] = None
+
 # ============== Health Check ==============
 @app.get("/health")
 async def health():
@@ -466,6 +488,345 @@ async def configure_alerts(
     
     return {"status": "configured", "config": config_data}
 
+# ============== SME PRODUCT MANAGEMENT ==============
+@app.post("/products")
+async def create_product(
+    request: ProductCreate,
+    credentials: HTTPAuthorizationCredentials = Depends(security)
+):
+    """SMEs can create products in their catalog"""
+    user = await get_current_user(credentials.credentials)
+    await require_roles(user["id"], ["retailer", "admin"])
+    
+    # Create product
+    product = await supabase.insert("products", {
+        "id": str(uuid.uuid4()),
+        "retailer_id": user["id"],
+        "name": request.name,
+        "description": request.description,
+        "category_id": request.category_id,
+        "sku": request.sku,
+        "price": float(request.price),
+        "compare_at_price": float(request.compare_at_price) if request.compare_at_price else None,
+        "cost_per_unit": float(request.cost_per_unit) if request.cost_per_unit else None,
+        "image_url": request.image_url,
+        "tags": request.tags,
+        "status": "active"
+    })
+    
+    product_id = product["id"]
+    
+    # Create initial inventory if specified
+    if request.initial_stock and request.initial_stock > 0:
+        warehouse_id = request.warehouse_id or await _get_default_warehouse(user["id"])
+        
+        await supabase.insert("inventory", {
+            "id": str(uuid.uuid4()),
+            "product_id": product_id,
+            "warehouse_id": warehouse_id,
+            "quantity": request.initial_stock,
+            "reserved_quantity": 0,
+            "cost_per_unit": float(request.cost_per_unit) if request.cost_per_unit else 0
+        })
+        
+        # Record stock movement
+        await supabase.insert("stock_movements", {
+            "id": str(uuid.uuid4()),
+            "product_id": product_id,
+            "warehouse_id": warehouse_id,
+            "movement_type": "purchase",
+            "quantity": request.initial_stock,
+            "quantity_before": 0,
+            "quantity_after": request.initial_stock,
+            "performed_by": user["id"],
+            "notes": "Initial stock"
+        })
+    
+    return {
+        "status": "created",
+        "product": product,
+        "initial_stock": request.initial_stock
+    }
+
+@app.get("/products")
+async def list_products(
+    status: Optional[str] = None,
+    search: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0,
+    credentials: HTTPAuthorizationCredentials = Depends(security)
+):
+    """List products for the authenticated retailer"""
+    user = await get_current_user(credentials.credentials)
+    await require_roles(user["id"], ["retailer", "admin"])
+    
+    filters = {"retailer_id": user["id"]}
+    if status:
+        filters["status"] = status
+    
+    products = await supabase.query(
+        "products",
+        filters=filters,
+        order_by="created_at",
+        ascending=False,
+        limit=limit,
+        offset=offset
+    )
+    
+    # Enrich with inventory data
+    for product in products:
+        inventory = await supabase.query("inventory", {"product_id": product["id"]})
+        product["total_stock"] = sum(inv.get("quantity", 0) for inv in inventory)
+        product["available_stock"] = sum(inv.get("available_quantity", 0) for inv in inventory)
+    
+    return {"products": products, "count": len(products)}
+
+@app.get("/products/{product_id}")
+async def get_product(
+    product_id: str,
+    credentials: HTTPAuthorizationCredentials = Depends(security)
+):
+    """Get product details with inventory"""
+    user = await get_current_user(credentials.credentials)
+    
+    product = await supabase.get_single("products", {"id": product_id})
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+    
+    # Check ownership for retailers
+    if user.get("role") == "retailer" and product["retailer_id"] != user["id"]:
+        raise HTTPException(status_code=403, detail="Access denied")
+    
+    # Get inventory
+    inventory = await supabase.query("inventory", {"product_id": product_id})
+    product["inventory"] = inventory
+    product["total_stock"] = sum(inv.get("quantity", 0) for inv in inventory)
+    product["available_stock"] = sum(inv.get("available_quantity", 0) for inv in inventory)
+    
+    return {"product": product}
+
+@app.patch("/products/{product_id}")
+async def update_product(
+    product_id: str,
+    request: ProductUpdate,
+    credentials: HTTPAuthorizationCredentials = Depends(security)
+):
+    """Update product details"""
+    user = await get_current_user(credentials.credentials)
+    await require_roles(user["id"], ["retailer", "admin"])
+    
+    # Verify ownership
+    product = await supabase.get_single("products", {"id": product_id, "retailer_id": user["id"]})
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+    
+    update_data = {k: v for k, v in request.dict(exclude_unset=True).items() if v is not None}
+    if "price" in update_data:
+        update_data["price"] = float(update_data["price"])
+    if "compare_at_price" in update_data:
+        update_data["compare_at_price"] = float(update_data["compare_at_price"])
+    
+    await supabase.update("products", {"id": product_id}, update_data)
+    
+    return {"status": "updated", "product_id": product_id}
+
+@app.delete("/products/{product_id}")
+async def archive_product(
+    product_id: str,
+    credentials: HTTPAuthorizationCredentials = Depends(security)
+):
+    """Archive a product (soft delete)"""
+    user = await get_current_user(credentials.credentials)
+    await require_roles(user["id"], ["retailer", "admin"])
+    
+    # Verify ownership
+    product = await supabase.get_single("products", {"id": product_id, "retailer_id": user["id"]})
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+    
+    await supabase.update("products", {"id": product_id}, {"status": "archived"})
+    
+    return {"status": "archived", "product_id": product_id}
+
+# ============== Stock Management for SMEs ==============
+@app.post("/products/{product_id}/stock/add")
+async def add_stock(
+    product_id: str,
+    quantity: int = Field(..., gt=0),
+    warehouse_id: Optional[str] = None,
+    cost_per_unit: Optional[Decimal] = None,
+    notes: Optional[str] = None,
+    credentials: HTTPAuthorizationCredentials = Depends(security)
+):
+    """Add stock to a product"""
+    user = await get_current_user(credentials.credentials)
+    await require_roles(user["id"], ["retailer", "admin"])
+    
+    # Verify product ownership
+    product = await supabase.get_single("products", {"id": product_id, "retailer_id": user["id"]})
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+    
+    warehouse_id = warehouse_id or await _get_default_warehouse(user["id"])
+    
+    # Get current inventory
+    inventory = await supabase.get_single("inventory", {
+        "product_id": product_id,
+        "warehouse_id": warehouse_id
+    })
+    
+    if not inventory:
+        # Create new inventory record
+        inventory = await supabase.insert("inventory", {
+            "id": str(uuid.uuid4()),
+            "product_id": product_id,
+            "warehouse_id": warehouse_id,
+            "quantity": quantity,
+            "reserved_quantity": 0,
+            "cost_per_unit": float(cost_per_unit) if cost_per_unit else 0
+        })
+        quantity_before = 0
+        quantity_after = quantity
+    else:
+        quantity_before = inventory["quantity"]
+        quantity_after = quantity_before + quantity
+        await supabase.update("inventory", {"id": inventory["id"]}, {
+            "quantity": quantity_after,
+            "last_restock_date": datetime.utcnow().isoformat()
+        })
+    
+    # Record movement
+    await supabase.insert("stock_movements", {
+        "id": str(uuid.uuid4()),
+        "product_id": product_id,
+        "warehouse_id": warehouse_id,
+        "movement_type": "purchase",
+        "quantity": quantity,
+        "quantity_before": quantity_before,
+        "quantity_after": quantity_after,
+        "performed_by": user["id"],
+        "notes": notes
+    })
+    
+    return {
+        "status": "stock_added",
+        "product_id": product_id,
+        "quantity_added": quantity,
+        "new_quantity": quantity_after
+    }
+
+@app.post("/products/{product_id}/stock/adjust")
+async def adjust_stock(
+    product_id: str,
+    adjustment: int,
+    warehouse_id: Optional[str] = None,
+    reason: Optional[str] = None,
+    credentials: HTTPAuthorizationCredentials = Depends(security)
+):
+    """Adjust stock (positive or negative)"""
+    user = await get_current_user(credentials.credentials)
+    await require_roles(user["id"], ["retailer", "admin"])
+    
+    # Verify product ownership
+    product = await supabase.get_single("products", {"id": product_id, "retailer_id": user["id"]})
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+    
+    warehouse_id = warehouse_id or await _get_default_warehouse(user["id"])
+    
+    inventory = await supabase.get_single("inventory", {
+        "product_id": product_id,
+        "warehouse_id": warehouse_id
+    })
+    
+    if not inventory:
+        raise HTTPException(status_code=404, detail="Inventory record not found")
+    
+    quantity_before = inventory["quantity"]
+    quantity_after = quantity_before + adjustment
+    
+    if quantity_after < 0:
+        raise HTTPException(status_code=400, detail="Adjustment would result in negative stock")
+    
+    await supabase.update("inventory", {"id": inventory["id"]}, {
+        "quantity": quantity_after
+    })
+    
+    # Record movement
+    await supabase.insert("stock_movements", {
+        "id": str(uuid.uuid4()),
+        "product_id": product_id,
+        "warehouse_id": warehouse_id,
+        "movement_type": "adjustment",
+        "quantity": abs(adjustment),
+        "quantity_before": quantity_before,
+        "quantity_after": quantity_after,
+        "performed_by": user["id"],
+        "notes": reason
+    })
+    
+    return {
+        "status": "adjusted",
+        "product_id": product_id,
+        "adjustment": adjustment,
+        "new_quantity": quantity_after
+    }
+
+# ============== Dashboard ==============
+@app.get("/dashboard")
+async def get_dashboard(
+    credentials: HTTPAuthorizationCredentials = Depends(security)
+):
+    """Get SME dashboard with stock overview and alerts"""
+    user = await get_current_user(credentials.credentials)
+    await require_roles(user["id"], ["retailer", "admin"])
+    
+    # Get product count
+    products = await supabase.query("products", {"retailer_id": user["id"], "status": "active"})
+    product_count = len(products)
+    
+    # Get low stock items
+    low_stock_items = []
+    for product in products:
+        inventory = await supabase.query("inventory", {"product_id": product["id"]})
+        total_available = sum(inv.get("available_quantity", 0) for inv in inventory)
+        low_threshold = inventory[0].get("low_stock_threshold", 10) if inventory else 10
+        
+        if total_available <= low_threshold:
+            low_stock_items.append({
+                "product_id": product["id"],
+                "product_name": product["name"],
+                "available_quantity": total_available,
+                "threshold": low_threshold
+            })
+    
+    # Get unacknowledged alerts
+    alerts = await supabase.query("stock_alerts", {
+        "is_acknowledged": False
+    })
+    
+    # Filter alerts for retailer's products
+    retailer_alerts = []
+    for alert in alerts:
+        product = await supabase.get_single("products", {"id": alert["product_id"]})
+        if product and product["retailer_id"] == user["id"]:
+            retailer_alerts.append(alert)
+    
+    # Get recent sales (last 7 days)
+    recent_sales = await supabase.rpc("get_retailer_sales_summary", {
+        "p_retailer_id": user["id"],
+        "p_days": 7
+    })
+    
+    return {
+        "product_count": product_count,
+        "low_stock_count": len(low_stock_items),
+        "low_stock_items": low_stock_items,
+        "active_alerts": len(retailer_alerts),
+        "alerts": retailer_alerts[:5],  # Top 5 alerts
+        "recent_sales": recent_sales
+    }
+
 # ============== Real-time Subscriptions ==============
 @app.get("/inventory/subscribe/{warehouse_id}")
 async def get_realtime_config(
@@ -520,6 +881,26 @@ async def _check_stock_alerts(product_id: str, warehouse_id: str, quantity: int)
                 "current_quantity": quantity,
                 "threshold": config.get("low_stock_threshold", 10)
             })
+
+async def _get_default_warehouse(retailer_id: str) -> str:
+    """Get or create default warehouse for retailer"""
+    warehouse = await supabase.get_single("warehouses", {
+        "retailer_id": retailer_id,
+        "is_active": True
+    })
+    
+    if warehouse:
+        return warehouse["id"]
+    
+    # Create default warehouse
+    new_warehouse = await supabase.insert("warehouses", {
+        "id": str(uuid.uuid4()),
+        "retailer_id": retailer_id,
+        "name": "Main Warehouse",
+        "is_active": True
+    })
+    
+    return new_warehouse["id"]
 
 if __name__ == "__main__":
     import uvicorn

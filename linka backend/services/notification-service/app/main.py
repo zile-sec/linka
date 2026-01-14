@@ -109,6 +109,21 @@ class DeviceTokenRequest(BaseModel):
     platform: str  # ios, android, web
     device_name: Optional[str] = None
 
+class MessageCreate(BaseModel):
+    recipient_id: str
+    content: str
+    message_type: str = "text"
+    order_id: Optional[str] = None
+    product_id: Optional[str] = None
+
+class ConversationResponse(BaseModel):
+    id: str
+    participant_1: str
+    participant_2: str
+    last_message_at: Optional[datetime]
+    last_message_preview: Optional[str]
+    unread_count: int
+
 # ============== Health Check ==============
 @app.get("/health")
 async def health():
@@ -401,6 +416,266 @@ async def update_preferences(
         await supabase.insert("notification_preferences", pref_data)
     
     return {"status": "updated", "preferences": pref_data}
+
+# ============== IN-APP MESSAGING ==============
+
+@app.post("/messages/send")
+async def send_message(
+    request: MessageCreate,
+    credentials: HTTPAuthorizationCredentials = Depends(security)
+):
+    """Send a message to another user (SME <-> Customer)"""
+    user = await get_current_user(credentials.credentials)
+    
+    # Ensure participants are ordered consistently
+    participant_1 = min(user["id"], request.recipient_id)
+    participant_2 = max(user["id"], request.recipient_id)
+    
+    # Get or create conversation
+    conversation_filter = {
+        "participant_1": participant_1,
+        "participant_2": participant_2
+    }
+    if request.order_id:
+        conversation_filter["order_id"] = request.order_id
+    
+    conversation = await supabase.get_single("conversations", conversation_filter)
+    
+    if not conversation:
+        # Create new conversation
+        conversation = await supabase.insert("conversations", {
+            "id": str(uuid.uuid4()),
+            "participant_1": participant_1,
+            "participant_2": participant_2,
+            "order_id": request.order_id,
+            "product_id": request.product_id,
+            "last_message_at": datetime.utcnow().isoformat(),
+            "last_message_preview": request.content[:100]
+        })
+    
+    # Create message
+    message = await supabase.insert("messages", {
+        "id": str(uuid.uuid4()),
+        "conversation_id": conversation["id"],
+        "sender_id": user["id"],
+        "message_type": request.message_type,
+        "content": request.content,
+        "is_read": False
+    })
+    
+    # Send via WebSocket to recipient if connected
+    await manager.send_to_user(request.recipient_id, {
+        "type": "new_message",
+        "message": message,
+        "conversation_id": conversation["id"]
+    })
+    
+    # Notification is created via trigger
+    
+    return {
+        "status": "sent",
+        "message_id": message["id"],
+        "conversation_id": conversation["id"]
+    }
+
+@app.get("/conversations")
+async def list_conversations(
+    archived: bool = False,
+    limit: int = 20,
+    offset: int = 0,
+    credentials: HTTPAuthorizationCredentials = Depends(security)
+):
+    """List user's conversations"""
+    user = await get_current_user(credentials.credentials)
+    
+    # Get conversations where user is a participant
+    conversations = await supabase.rpc("get_user_conversations", {
+        "p_user_id": user["id"],
+        "p_archived": archived,
+        "p_limit": limit,
+        "p_offset": offset
+    })
+    
+    # Enrich with unread count
+    for conv in conversations:
+        unread = await supabase.query("messages", {
+            "conversation_id": conv["id"],
+            "sender_id": {"neq": user["id"]},
+            "is_read": False
+        })
+        conv["unread_count"] = len(unread)
+    
+    return {
+        "conversations": conversations,
+        "count": len(conversations)
+    }
+
+@app.get("/conversations/{conversation_id}/messages")
+async def get_conversation_messages(
+    conversation_id: str,
+    limit: int = 50,
+    offset: int = 0,
+    before_id: Optional[str] = None,
+    credentials: HTTPAuthorizationCredentials = Depends(security)
+):
+    """Get messages in a conversation"""
+    user = await get_current_user(credentials.credentials)
+    
+    # Verify user is participant
+    conversation = await supabase.get_single("conversations", {"id": conversation_id})
+    if not conversation:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    
+    if user["id"] not in [conversation["participant_1"], conversation["participant_2"]]:
+        raise HTTPException(status_code=403, detail="Access denied")
+    
+    # Get messages
+    filters = {"conversation_id": conversation_id, "is_deleted": False}
+    
+    messages = await supabase.query(
+        "messages",
+        filters=filters,
+        order_by="created_at",
+        ascending=False,
+        limit=limit,
+        offset=offset
+    )
+    
+    # Mark messages as read
+    unread_ids = [m["id"] for m in messages if m["sender_id"] != user["id"] and not m["is_read"]]
+    if unread_ids:
+        for msg_id in unread_ids:
+            await supabase.update("messages", {"id": msg_id}, {
+                "is_read": True,
+                "read_at": datetime.utcnow().isoformat()
+            })
+    
+    return {
+        "conversation_id": conversation_id,
+        "messages": list(reversed(messages)),  # Return in chronological order
+        "count": len(messages)
+    }
+
+@app.post("/conversations/{conversation_id}/mark-read")
+async def mark_conversation_read(
+    conversation_id: str,
+    credentials: HTTPAuthorizationCredentials = Depends(security)
+):
+    """Mark all messages in conversation as read"""
+    user = await get_current_user(credentials.credentials)
+    
+    # Verify access
+    conversation = await supabase.get_single("conversations", {"id": conversation_id})
+    if not conversation:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    
+    if user["id"] not in [conversation["participant_1"], conversation["participant_2"]]:
+        raise HTTPException(status_code=403, detail="Access denied")
+    
+    # Mark all unread messages as read
+    result = await supabase.rpc("mark_conversation_read", {
+        "p_conversation_id": conversation_id,
+        "p_user_id": user["id"]
+    })
+    
+    return {
+        "status": "marked_read",
+        "conversation_id": conversation_id,
+        "count": result.get("count", 0)
+    }
+
+@app.get("/messages/unread-count")
+async def get_unread_message_count(
+    credentials: HTTPAuthorizationCredentials = Depends(security)
+):
+    """Get total unread message count"""
+    user = await get_current_user(credentials.credentials)
+    
+    count = await supabase.rpc("get_unread_message_count", {"p_user_id": user["id"]})
+    
+    return {"unread_count": count}
+
+# ============== Delivery Status Notification Endpoints ==============
+
+@app.post("/internal/events/delivery-update")
+async def handle_delivery_update(
+    payload: dict,
+    background_tasks: BackgroundTasks
+):
+    """Handle delivery status updates and notify customer"""
+    delivery_id = payload.get("delivery_id")
+    status = payload.get("status")
+    customer_id = payload.get("customer_id")
+    retailer_id = payload.get("retailer_id")
+    order_id = payload.get("order_id")
+    
+    status_messages = {
+        "assigned": ("Driver Assigned", "A driver has been assigned to your delivery"),
+        "picked_up": ("Order Picked Up", "Your order has been picked up and is on the way"),
+        "in_transit": ("Out for Delivery", "Your order is out for delivery"),
+        "arrived": ("Driver Nearby", "Your driver has arrived at the delivery location"),
+        "delivered": ("Order Delivered", "Your order has been successfully delivered"),
+        "failed": ("Delivery Failed", "There was an issue with your delivery. Please contact support.")
+    }
+    
+    if status in status_messages:
+        title, body = status_messages[status]
+        
+        # Notify customer
+        await supabase.insert("notifications", {
+            "id": str(uuid.uuid4()),
+            "user_id": customer_id,
+            "type": "delivery_" + status,
+            "title": title,
+            "body": body,
+            "category": "delivery",
+            "priority": "high" if status in ["arrived", "delivered"] else "medium",
+            "reference_type": "delivery",
+            "reference_id": delivery_id,
+            "data": {"order_id": order_id, "delivery_id": delivery_id}
+        })
+        
+        # Send WebSocket notification
+        await manager.send_to_user(customer_id, {
+            "type": "delivery_update",
+            "status": status,
+            "delivery_id": delivery_id,
+            "order_id": order_id
+        })
+    
+    return {"status": "processed"}
+
+@app.post("/internal/events/payment-received")
+async def handle_payment_received(
+    payload: dict
+):
+    """Notify SME when payment is received"""
+    order_id = payload.get("order_id")
+    retailer_id = payload.get("retailer_id")
+    amount = payload.get("amount")
+    payment_method = payload.get("payment_method")
+    
+    await supabase.insert("notifications", {
+        "id": str(uuid.uuid4()),
+        "user_id": retailer_id,
+        "type": "payment_received",
+        "title": "Payment Received",
+        "body": f"You received a payment of K{amount:.2f} via {payment_method}",
+        "category": "payment",
+        "priority": "high",
+        "reference_type": "order",
+        "reference_id": order_id,
+        "data": {"amount": amount, "payment_method": payment_method}
+    })
+    
+    # Send WebSocket notification
+    await manager.send_to_user(retailer_id, {
+        "type": "payment_received",
+        "amount": amount,
+        "order_id": order_id
+    })
+    
+    return {"status": "processed"}
 
 # ============== Event Handlers (Internal) ==============
 @app.post("/internal/events/order")

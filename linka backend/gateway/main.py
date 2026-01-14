@@ -99,10 +99,22 @@ async def signup(request: Request, auth: AuthRequest):
 @app.post("/auth/login")
 @limiter.limit("10/minute")
 async def login(request: Request, auth: AuthRequest):
+    """Login user and return access token with full profile"""
     # Forward to User Service
     async with httpx.AsyncClient() as client:
-        response = await client.post(f"{SERVICE_URLS['user']}/login", json=auth.dict())
-    return response.json()
+        response = await client.post(
+            f"{SERVICE_URLS['user']}/login", 
+            json=auth.dict(),
+            timeout=10.0
+        )
+        
+        if response.status_code != 200:
+            raise HTTPException(
+                status_code=response.status_code,
+                detail=response.json().get("detail", "Login failed")
+            )
+        
+        return response.json()
 
 # General Routing Proxy
 @app.api_route("/{service}/{path:path}", methods=["GET", "POST", "PUT", "DELETE"])

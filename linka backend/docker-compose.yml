@@ -44,13 +44,14 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - SUPABASE_URL=${SUPABASE_URL:-http://localhost:8000}
-      - SUPABASE_KEY=${SUPABASE_KEY:-test-key}
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_KEY=${SUPABASE_KEY}
       - LOG_LEVEL=DEBUG
       - ENV=development
+      - PYTHONPATH=/app
     volumes:
       - ./services/user-service/app:/app/app
-      #- ./services/user-service/tests:/app/tests
+      - ./packages:/app/packages
     depends_on:
       redis:
         condition: service_healthy
@@ -73,13 +74,16 @@ services:
     ports:
       - "8001:8000"
     environment:
-      - DATABASE_URL=${DATABASE_URL:-postgresql://${DB_USER:-zile}:${DB_PASSWORD:-localpass}@postgres:5432/${DB_NAME:-linkadb}}
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_KEY=${SUPABASE_KEY}
       - REDIS_URL=redis://redis:6379
       - RABBITMQ_URL=amqp://${RABBITMQ_USER:-guest}:${RABBITMQ_PASSWORD:-guest}@rabbitmq:5672/
       - LOG_LEVEL=DEBUG
       - ENV=development
+      - PYTHONPATH=/app
     volumes:
       - ./services/order-service/app:/app/app
+      - ./packages:/app/packages
     depends_on:
       redis:
         condition: service_healthy
@@ -102,12 +106,15 @@ services:
     ports:
       - "8002:8000"
     environment:
-      - DATABASE_URL=${DATABASE_URL:-postgresql://${DB_USER:-zile}:${DB_PASSWORD:-localpass}@postgres:5432/${DB_NAME:-linkadb}}
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_KEY=${SUPABASE_KEY}
       - REDIS_URL=redis://redis:6379
       - LOG_LEVEL=DEBUG
       - ENV=development
+      - PYTHONPATH=/app
     volumes:
       - ./services/product-service/app:/app/app
+      - ./packages:/app/packages
     depends_on:
       redis:
         condition: service_healthy
@@ -128,12 +135,15 @@ services:
     ports:
       - "8003:8000"
     environment:
-      - DATABASE_URL=${DATABASE_URL:-postgresql://${DB_USER:-zile}:${DB_PASSWORD:-localpass}@postgres:5432/${DB_NAME:-linkadb}}
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_KEY=${SUPABASE_KEY}
       - REDIS_URL=redis://redis:6379
       - LOG_LEVEL=DEBUG
       - ENV=development
+      - PYTHONPATH=/app
     volumes:
       - ./services/payment-service/app:/app/app
+      - ./packages:/app/packages
     depends_on:
       redis:
         condition: service_healthy
@@ -154,12 +164,15 @@ services:
     ports:
       - "8004:8000"
     environment:
-      - DATABASE_URL=${DATABASE_URL:-postgresql://${DB_USER:-zile}:${DB_PASSWORD:-localpass}@postgres:5432/${DB_NAME:-linkadb}}
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_KEY=${SUPABASE_KEY}
       - REDIS_URL=redis://redis:6379
       - LOG_LEVEL=DEBUG
       - ENV=development
+      - PYTHONPATH=/app
     volumes:
       - ./services/wallet-service/app:/app/app
+      - ./packages:/app/packages
     depends_on:
       redis:
         condition: service_healthy
@@ -180,12 +193,15 @@ services:
     ports:
       - "8005:8000"
     environment:
-      - DATABASE_URL=${DATABASE_URL:-postgresql://${DB_USER:-zile}:${DB_PASSWORD:-localpass}@postgres:5432/${DB_NAME:-linkadb}}
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_KEY=${SUPABASE_KEY}
       - REDIS_URL=redis://redis:6379
       - LOG_LEVEL=DEBUG
       - ENV=development
+      - PYTHONPATH=/app
     volumes:
       - ./services/inventory-service/app:/app/app
+      - ./packages:/app/packages
     depends_on:
       redis:
         condition: service_healthy
@@ -206,12 +222,15 @@ services:
     ports:
       - "8006:8000"
     environment:
-      - DATABASE_URL=${DATABASE_URL:-postgresql://${DB_USER:-zile}:${DB_PASSWORD:-localpass}@postgres:5432/${DB_NAME:-linkadb}}
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_KEY=${SUPABASE_KEY}
       - REDIS_URL=redis://redis:6379
       - LOG_LEVEL=DEBUG
       - ENV=development
+      - PYTHONPATH=/app
     volumes:
       - ./services/delivery-service/app:/app/app
+      - ./packages:/app/packages
     depends_on:
       redis:
         condition: service_healthy
@@ -232,11 +251,15 @@ services:
     ports:
       - "8007:8000"
     environment:
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_KEY=${SUPABASE_KEY}
       - RABBITMQ_URL=amqp://${RABBITMQ_USER:-guest}:${RABBITMQ_PASSWORD:-guest}@rabbitmq:5672/
       - LOG_LEVEL=DEBUG
       - ENV=development
+      - PYTHONPATH=/app
     volumes:
       - ./services/notification-service/app:/app/app
+      - ./packages:/app/packages
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -257,12 +280,15 @@ services:
     ports:
       - "8008:8000"
     environment:
-      - DATABASE_URL=${DATABASE_URL:-postgresql://${DB_USER:-zile}:${DB_PASSWORD:-localpass}@postgres:5432/${DB_NAME:-linkadb}}
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_KEY=${SUPABASE_KEY}
       - REDIS_URL=redis://redis:6379
       - LOG_LEVEL=DEBUG
       - ENV=development
+      - PYTHONPATH=/app
     volumes:
       - ./services/subscription-service/app:/app/app
+      - ./packages:/app/packages
     depends_on:
       redis:
         condition: service_healthy
@@ -292,8 +318,8 @@ services:
       - DELIVERY_SERVICE_URL=http://delivery-service:8000
       - NOTIFICATION_SERVICE_URL=http://notification-service:8000
       - SUBSCRIPTION_SERVICE_URL=http://subscription-service:8000
-      - SUPABASE_URL=${SUPABASE_URL:-http://localhost:8000}
-      - SUPABASE_KEY=${SUPABASE_KEY:-test-key}
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_KEY=${SUPABASE_KEY}
       - LOG_LEVEL=DEBUG
       - ENV=development
     volumes:
@@ -320,4 +346,4 @@ volumes:
 
 networks:
   linka-network:
-    driver: bridge  # --- YOUR SERVICES (Skeletons) ---
+    driver: bridge

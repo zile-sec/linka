@@ -13,9 +13,9 @@ The improved `docker-compose.yml` is optimized for local development and testing
 ## Quick Start
 
 ### 1. **Start All Services**
-```bash
+\`\`\`bash
 docker compose up -d
-```
+\`\`\`
 
 This will:
 - Start PostgreSQL, Redis, and RabbitMQ infrastructure
@@ -24,16 +24,16 @@ This will:
 - Wait for health checks to pass
 
 ### 2. **Check Service Status**
-```bash
+\`\`\`bash
 # See all running containers
 docker compose ps
 
 # Check if all services are healthy
 docker compose ps --format "table {{.Names}}\t{{.Status}}"
-```
+\`\`\`
 
 ### 3. **View Logs**
-```bash
+\`\`\`bash
 # All services
 docker compose logs -f
 
@@ -42,17 +42,17 @@ docker compose logs -f user-service
 
 # Last 100 lines
 docker compose logs --tail 100 api-gateway
-```
+\`\`\`
 
 ### 4. **Stop All Services**
-```bash
+\`\`\`bash
 docker compose down
-```
+\`\`\`
 
 ### 5. **Remove Everything (with volumes)**
-```bash
+\`\`\`bash
 docker compose down -v
-```
+\`\`\`
 
 ## Service Ports
 
@@ -76,7 +76,7 @@ docker compose down -v
 ## Testing the Services
 
 ### 1. **Test User Service Registration**
-```bash
+\`\`\`bash
 curl -X POST http://localhost:8000/signup \
   -H "Content-Type: application/json" \
   -d '{
@@ -84,37 +84,37 @@ curl -X POST http://localhost:8000/signup \
     "password": "SecurePass123!",
     "role": "customer"
   }'
-```
+\`\`\`
 
 ### 2. **Test API Gateway**
-```bash
+\`\`\`bash
 # Check gateway health
 curl http://localhost:8080/health
 
 # Check gateway readiness
 curl http://localhost:8080/ready
-```
+\`\`\`
 
 ### 3. **Test Service Health Checks**
-```bash
+\`\`\`bash
 # Test all services
 for port in 8000 8001 8002 8003 8004 8005 8006 8007 8008 8080; do
   echo "Port $port:"
   curl -s http://localhost:$port/health | jq .
 done
-```
+\`\`\`
 
 ### 4. **Access RabbitMQ UI**
-```
+\`\`\`
 http://localhost:15672
 Username: guest
 Password: guest
-```
+\`\`\`
 
 ### 5. **Connect to PostgreSQL**
-```bash
+\`\`\`bash
 psql postgresql://zile:localpass@localhost:5432/linka
-```
+\`\`\`
 
 ## Environment Configuration
 
@@ -130,24 +130,24 @@ The `.env` file controls:
 ### Modify Environment Variables
 
 To change values, edit `.env`:
-```bash
+\`\`\`bash
 DB_PASSWORD=your_new_password
 LOG_LEVEL=INFO
-```
+\`\`\`
 
 Then restart services:
-```bash
+\`\`\`bash
 docker compose restart
-```
+\`\`\`
 
 ## Troubleshooting
 
 ### Services Won't Start
 
 **Check logs:**
-```bash
+\`\`\`bash
 docker compose logs -f service-name
-```
+\`\`\`
 
 **Common issues:**
 - Port already in use: `sudo lsof -i :8000`
@@ -157,125 +157,125 @@ docker compose logs -f service-name
 ### Service Health Checks Failing
 
 **View health endpoint:**
-```bash
+\`\`\`bash
 curl http://localhost:8000/ready
-```
+\`\`\`
 
 **Check service logs:**
-```bash
+\`\`\`bash
 docker compose logs user-service | tail -50
-```
+\`\`\`
 
 ### Database Connection Issues
 
 **Check PostgreSQL status:**
-```bash
+\`\`\`bash
 docker compose exec postgres pg_isready
-```
+\`\`\`
 
 **View PostgreSQL logs:**
-```bash
+\`\`\`bash
 docker compose logs postgres
-```
+\`\`\`
 
 ### Reset Database
 
-```bash
+\`\`\`bash
 docker compose down -v
 docker compose up postgres -d
 docker compose exec postgres createdb -U zile linka
-```
+\`\`\`
 
 ## Development Workflow
 
 ### 1. **Hot Reload**
 
 All services have `--reload` enabled. Changes to code are automatically reloaded:
-```bash
+\`\`\`bash
 # Edit a file
 vim services/user-service/app/main.py
 
 # Changes take effect immediately (see logs)
 docker compose logs -f user-service
-```
+\`\`\`
 
 ### 2. **Run Tests Inside Container**
 
-```bash
+\`\`\`bash
 # Run user-service tests
 docker compose exec user-service pytest tests/
 
 # Run with coverage
 docker compose exec user-service pytest --cov=app tests/
-```
+\`\`\`
 
 ### 3. **Debug a Service**
 
 Add breakpoint to code and attach debugger:
-```bash
+\`\`\`bash
 # View live logs
 docker compose logs -f user-service
 
 # Or use Docker exec to run Python directly
 docker compose exec user-service python -m pdb app/main.py
-```
+\`\`\`
 
 ## Advanced Commands
 
 ### Scale Services (experimental)
 
-```bash
+\`\`\`bash
 # Scale order-service to 3 replicas
 docker compose up -d --scale order-service=3
-```
+\`\`\`
 
 Note: Ports will conflict. Use proper orchestration (Kubernetes) for production scaling.
 
 ### View Network
 
-```bash
+\`\`\`bash
 # List networks
 docker network ls | grep linka
 
 # Inspect network
 docker network inspect linka-network
-```
+\`\`\`
 
 ### Build Without Starting
 
-```bash
+\`\`\`bash
 docker compose build
-```
+\`\`\`
 
 ### Rebuild Service (no cache)
 
-```bash
+\`\`\`bash
 docker compose build --no-cache user-service
-```
+\`\`\`
 
 ## Performance Monitoring
 
 ### View Container Resource Usage
 
-```bash
+\`\`\`bash
 docker stats
-```
+\`\`\`
 
 ### Top Processes in Container
 
-```bash
+\`\`\`bash
 docker compose top user-service
-```
+\`\`\`
 
 ## Database Migrations (When Implemented)
 
-```bash
+\`\`\`bash
 # Apply migrations
 docker compose exec api-gateway alembic upgrade head
 
 # Revert migrations
 docker compose exec api-gateway alembic downgrade -1
-```
+\`\`\`
 
 ## Health Check Details
 
