@@ -45,14 +45,27 @@ class SupabaseClient:
         return response.data
     
     def get_single(self, table: str, filters: Dict) -> Optional[Dict]:
-        """Get a single record"""
-        query = self.client.table(table).select("*")
-        
-        for key, value in filters.items():
-            query = query.eq(key, value)
-        
-        response = query.single().execute()
-        return response.data if response.data else None
+        """Get a single record, returns None if not found"""
+        try:
+            query = self.client.table(table).select("*")
+            for key, value in filters.items():
+                query = query.eq(key, value)
+            response = query.limit(1).execute()
+            if response.data and len(response.data) > 0:
+                return response.data[0]
+            return None
+        except Exception as e:
+            logger.warning(f"get_single from '{table}' failed: {e}")
+            return None
+
+    def test_connection(self) -> bool:
+        """Test that the Supabase connection is alive"""
+        try:
+            self.client.table("user_profiles").select("id", count="exact").limit(0).execute()
+            return True
+        except Exception as e:
+            logger.error(f"Supabase connection test failed: {e}")
+            return False
     
     def insert(self, table: str, data: Dict) -> Dict:
         """Insert a record"""

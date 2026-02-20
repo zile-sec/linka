@@ -1,8 +1,11 @@
 {
-  "name": "my-v0-project",
+  "name": "linka-platform",
   "version": "0.1.0",
   "private": true,
+  "description": "Linka Platform - Zambian SME E-Commerce Marketplace (Minimal Next.js Wrapper)",
   "scripts": {
+    "backend": "cd 'linka backend' && docker-compose up",
+    "backend:down": "cd 'linka backend' && docker-compose down",
     "build": "next build",
     "dev": "next dev",
     "lint": "eslint .",

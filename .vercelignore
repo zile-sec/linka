@@ -1,0 +1,5 @@
+# Ignore backend services during Vercel deployment
+linka backend/
+
+# Only deploy the minimal Next.js wrapper
+# The backend should be deployed separately to a container platform

@@ -1,5 +1,5 @@
 """Authentication middleware for Linka services"""
-from typing import Optional
+from typing import Optional, List
 from enum import Enum
 from pydantic import BaseModel
 from fastapi import HTTPException, Depends
